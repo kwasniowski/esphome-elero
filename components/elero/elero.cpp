@@ -69,7 +69,6 @@ void Elero::flush_and_rx() {
 void Elero::reset() {
   // We don't do a hardware reset as we can't read
   // the MISO pin directly. Rely on software-reset only.
-  
   this->enable();
   this->write_byte(CC1101_SRES);
   delay_microseconds_safe(50);
@@ -86,6 +85,7 @@ void Elero::init() {
   this->write_reg(CC1101_FREQ2, this->freq2_);
   this->write_reg(CC1101_FREQ1, this->freq1_);
   this->write_reg(CC1101_FREQ0, this->freq0_);
+  this->write_reg(CC1101_PATABLE, 0xC0); // +10dB https://github.com/andyboeh/esphome-elero/compare/main...Chyllie:esphome-elero:main
   this->write_reg(CC1101_MDMCFG4, 0x7B);
   this->write_reg(CC1101_MDMCFG3, 0x83);
   this->write_reg(CC1101_MDMCFG2, 0x13); 
