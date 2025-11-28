@@ -10,6 +10,36 @@ namespace esphome {
 namespace elero {
 
 class EleroCover : public cover::Cover, public Component {
+private:
+  static const uint8_t ELERO_COMMAND_COVER_CONTROL = 0x6a;
+  static const uint8_t ELERO_COMMAND_COVER_CHECK = 0x00;
+  static const uint8_t ELERO_COMMAND_COVER_STOP = 0x10;
+  static const uint8_t ELERO_COMMAND_COVER_UP = 0x20;
+  static const uint8_t ELERO_COMMAND_COVER_TILT = 0x24;
+  static const uint8_t ELERO_COMMAND_COVER_DOWN = 0x40;
+  static const uint8_t ELERO_COMMAND_COVER_INT = 0x44;
+
+  static const uint8_t ELERO_STATE_UNKNOWN = 0x00;
+  static const uint8_t ELERO_STATE_TOP = 0x01;
+  static const uint8_t ELERO_STATE_BOTTOM = 0x02;
+  static const uint8_t ELERO_STATE_INTERMEDIATE = 0x03;
+  static const uint8_t ELERO_STATE_TILT =0x04;
+  static const uint8_t ELERO_STATE_BLOCKING = 0x05;
+  static const uint8_t ELERO_STATE_OVERHEATED = 0x06;
+  static const uint8_t ELERO_STATE_TIMEOUT = 0x07;
+  static const uint8_t ELERO_STATE_START_MOVING_UP = 0x08;
+  static const uint8_t ELERO_STATE_START_MOVING_DOWN = 0x09;
+  static const uint8_t ELERO_STATE_MOVING_UP = 0x0a;
+  static const uint8_t ELERO_STATE_MOVING_DOWN = 0x0b;
+  static const uint8_t ELERO_STATE_STOPPED = 0x0d;
+  static const uint8_t ELERO_STATE_TOP_TILT = 0x0e;
+  static const uint8_t ELERO_STATE_BOTTOM_TILT = 0x0f;
+  static const uint8_t ELERO_STATE_OFF = 0x10;
+  static const uint8_t ELERO_STATE_ON = 0x11;
+
+  static const char *command_to_string(uint8_t command);
+  static const char *state_to_string(uint8_t command);
+
  public:
   void setup() override;
   void loop() override;
@@ -36,7 +66,7 @@ class EleroCover : public cover::Cover, public Component {
   void set_close_duration(uint32_t dur) { this->close_duration_ = dur; }
   void set_open_duration(uint32_t dur) { this->open_duration_ = dur; }
   void set_poll_interval(uint32_t intvl) { this->poll_intvl_ = intvl; }
-  uint32_t get_blind_address() { return this->command_.blind_addr; }
+  uint32_t get_blind_address() const { return this->command_.blind_addr; }
   void set_supports_tilt(bool tilt) { this->supports_tilt_ = tilt; }
   void set_rx_state(uint8_t state);
   void handle_commands(uint32_t now);

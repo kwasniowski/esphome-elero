@@ -74,7 +74,7 @@ bool EleroCover::is_at_target() {
 void EleroCover::handle_commands(uint32_t now) {
   if((now - this->last_command_) > ELERO_DELAY_SEND_PACKETS) {
     if(this->commands_to_send_.size() > 0) {
-      this->command_.payload[4] = this->commands_to_send_.front();
+      this->command_.command = this->commands_to_send_.front();
       if(this->parent_->send_command(&this->command_)) {
         this->send_packets_++;
         this->send_retries_ = 0;
@@ -113,7 +113,8 @@ cover::CoverTraits EleroCover::get_traits() {
 }
 
 void EleroCover::set_rx_state(uint8_t state) {
-  ESP_LOGV(TAG, "Got state: 0x%02x for blind 0x%02x", state, this->command_.blind_addr);
+  ESP_LOGV(TAG, "Got state: %s (0x%02x) for blind %s (0x%02x)", this->state_to_string(state), state,
+           this->get_name().c_str(), this->command_.blind_addr);
   float pos = this->position;
   float current_tilt = this->tilt;
   CoverOperation op = this->current_operation;
@@ -263,6 +264,70 @@ void EleroCover::recompute_position() {
 
   this->last_recompute_time_ = now;
 
+}
+
+const char *EleroCover::command_to_string(uint8_t command)
+{
+  switch (command)
+  {
+  case ELERO_COMMAND_COVER_CONTROL:
+    return "Control";
+  case ELERO_COMMAND_COVER_CHECK:
+    return "Check";
+  case ELERO_COMMAND_COVER_STOP:
+    return "Stop";
+  case ELERO_COMMAND_COVER_UP:
+    return "Up";
+  case ELERO_COMMAND_COVER_TILT:
+    return "Tilt";
+  case ELERO_COMMAND_COVER_DOWN:
+    return "Down";
+  case ELERO_COMMAND_COVER_INT:
+    return "Int";
+  }
+  return "???";
+}
+
+const char *EleroCover::state_to_string(uint8_t state)
+{
+  switch (state)
+  {
+  case ELERO_STATE_UNKNOWN:
+    return "Unknown";
+  case ELERO_STATE_TOP:
+    return "Top";
+  case ELERO_STATE_BOTTOM:
+    return "Bottom";
+  case ELERO_STATE_INTERMEDIATE:
+    return "Intermediate";
+  case ELERO_STATE_TILT:
+    return "Tilt";
+  case ELERO_STATE_BLOCKING:
+    return "Blocking";
+  case ELERO_STATE_OVERHEATED:
+    return "Overheated";
+  case ELERO_STATE_TIMEOUT:
+    return "Timeout";
+  case ELERO_STATE_START_MOVING_UP:
+    return "Start moving up";
+  case ELERO_STATE_START_MOVING_DOWN:
+    return "Start moving down";
+  case ELERO_STATE_MOVING_UP:
+    return "Moving up";
+  case ELERO_STATE_MOVING_DOWN:
+    return "Moving down";
+  case ELERO_STATE_STOPPED:
+    return "Stopped";
+  case ELERO_STATE_TOP_TILT:
+    return "Top tilt";
+  case ELERO_STATE_BOTTOM_TILT:
+    return "Bottom tilt";
+  case ELERO_STATE_OFF:
+    return "Off";
+  case ELERO_STATE_ON:
+    return "On";
+  }
+  return "???";
 }
 
 } // namespace elero
