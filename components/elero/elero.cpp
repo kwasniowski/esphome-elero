@@ -84,7 +84,6 @@ void Elero::init() {
   this->write_reg(CC1101_FREQ2, this->freq2_);
   this->write_reg(CC1101_FREQ1, this->freq1_);
   this->write_reg(CC1101_FREQ0, this->freq0_);
-  this->write_reg(CC1101_PATABLE, 0xC0); // +10dB https://github.com/andyboeh/esphome-elero/compare/main...Chyllie:esphome-elero:main
   this->write_reg(CC1101_MDMCFG4, 0x7B);
   this->write_reg(CC1101_MDMCFG3, 0x83);
   this->write_reg(CC1101_MDMCFG2, 0x13); 
@@ -459,8 +458,8 @@ void Elero::interpret_msg() {
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
   msg_decode(payload);
 
-  ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%s, bwd=0x%s, "
-                "fwd=0x%s, #dst=%02d, dst=0x%s, rssi=%2.1f, lqi=%2d, crc=%2d, "
+  ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=%s, bwd=%s, "
+                "fwd=%s, #dst=%02d, dst=%s, rssi=%2.1f, lqi=%2d, crc=%2d, "
                 "payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]",
            length, cnt, typ, typ2, hop, syst, chl, resolve_addr(src).c_str(), resolve_addr(bwd).c_str(),
            resolve_addr(fwd).c_str(), num_dests, resolve_addr(dst).c_str(), rssi, lqi, crc, payload1, payload2,
