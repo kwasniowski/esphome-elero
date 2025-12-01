@@ -36,7 +36,6 @@ cover::CoverTraits EleroCover::get_traits() {
   auto traits = cover::CoverTraits();
   traits.set_supports_position(true);
   traits.set_supports_stop(true);
-  // Assumed state allows buttons to be active even if HA thinks limit is reached
   traits.set_is_assumed_state(true);
   
   if (this->supports_tilt_) {
@@ -107,6 +106,7 @@ void EleroCover::loop() {
 
 void EleroCover::control(const cover::CoverCall &call) {
   this->is_tilting_only_ = false;
+  this->last_command_time_ = millis(); // Record time of command
 
   // 1. STOP
   if (call.get_stop()) {
@@ -124,8 +124,7 @@ void EleroCover::control(const cover::CoverCall &call) {
 
     this->is_tilting_only_ = false;
 
-    // FIX: Force movement if target is at limits (0.0 or 1.0)
-    // This allows re-syncing if HA thinks we are at limit but we are not.
+    // Force movement if target is at limits to ensure sync
     bool force_up = (target_pos == 1.0f);
     bool force_down = (target_pos == 0.0f);
 
@@ -192,11 +191,11 @@ void EleroCover::poll_status(uint8_t retries) {
 }
 
 void EleroCover::start_poll_loop() {
-  // Try for approx 90 seconds (45 * 2s)
-  this->poll_retries_left_ = 45;
+  // Start with 3 retries as requested
+  this->poll_retries_left_ = 3;
   this->cancel_timeout("poll_loop");
   
-  // Start first poll after 1s delay
+  // Initial delay 1000ms to allow motor to start
   this->set_timeout("poll_loop", 1000, [this]() {
     this->execute_poll_loop();
   });
@@ -204,7 +203,7 @@ void EleroCover::start_poll_loop() {
 
 void EleroCover::execute_poll_loop() {
   if (this->poll_retries_left_ <= 0) {
-    ESP_LOGD(TAG, "Polling timeout reached, stopping.");
+    ESP_LOGD(TAG, "Polling finished (retries exhausted).");
     return;
   }
 
@@ -215,8 +214,8 @@ void EleroCover::execute_poll_loop() {
     this->increase_counter();
     t_elero_command cmd;
     memset(&cmd, 0, sizeof(cmd));
-    cmd.payload[0] = 0x00; // CLEAN PAYLOAD FOR CHECK
-    cmd.payload[1] = 0x00; // CLEAN PAYLOAD FOR CHECK
+    cmd.payload[0] = 0x00; 
+    cmd.payload[1] = 0x00; 
     cmd.pck_inf[0] = this->pckinf_1_;
     cmd.pck_inf[1] = this->pckinf_2_;
     cmd.hop = this->hop_;
@@ -254,6 +253,7 @@ void EleroCover::on_command(uint8_t command, uint8_t channel, uint32_t blind_add
   this->cancel_timeout("stop_timer");
   this->cancel_interval("check_pos");
   this->is_tilting_only_ = false;
+  this->last_command_time_ = millis(); // Treat remote command as local command for timing
 
   if (command == this->command_up_) {
     this->start_movement(cover::COVER_OPERATION_OPENING);
@@ -273,36 +273,33 @@ void EleroCover::set_rx_state(uint8_t state) {
   ESP_LOGD(TAG, "Received status byte: 0x%02X for blind 0x%06X", state, this->blind_address_);
   this->last_valid_status_time_ = millis();
 
+  // Check if we should ignore a "Stopped" status because we just sent a command
+  // This prevents the "Short Movement" issue where the blind replies "Stopped" immediately after getting a Move command
+  bool ignore_stop = (millis() - this->last_command_time_ < 2000);
+
   switch (state) {
     case ELERO_STATE_TOP: // 0x01
-      ESP_LOGD(TAG, "Status: Top Limit Reached");
-      this->exact_position_ = 1.0f;
-      this->exact_tilt_ = 1.0f;
-      this->stop_movement();
-      this->stop_poll_loop();
+      if (ignore_stop && this->current_operation == cover::COVER_OPERATION_OPENING) {
+         ESP_LOGD(TAG, "Ignoring Top/Stop status (command sent recently)");
+      } else {
+         ESP_LOGD(TAG, "Status: Top Limit Reached");
+         this->exact_position_ = 1.0f;
+         this->exact_tilt_ = 1.0f;
+         this->stop_movement();
+         this->stop_poll_loop();
+      }
       break;
 
     case ELERO_STATE_BOTTOM: // 0x02
-      ESP_LOGD(TAG, "Status: Bottom Limit Reached");
-      this->exact_position_ = 0.0f;
-      this->exact_tilt_ = 0.0f;
-      this->stop_movement();
-      this->stop_poll_loop();
-      break;
-
-    case ELERO_STATE_STOPPED: // 0x0D
-    case ELERO_STATE_INTERMEDIATE: // 0x03
-    case ELERO_STATE_TILT: // 0x04
-    case ELERO_STATE_TOP_TILT: // 0x0E
-    case ELERO_STATE_BOTTOM_TILT: // 0x0F
-    case ELERO_STATE_BLOCKING: // 0x05
-    case ELERO_STATE_OVERHEATED: // 0x06
-    case ELERO_STATE_TIMEOUT: // 0x07
-    default:
-      // For any other state (Stopped, Error, Unknown), assume we stopped.
-      ESP_LOGD(TAG, "Status: Stopped/Other (0x%02X)", state);
-      this->stop_movement();
-      this->stop_poll_loop();
+      if (ignore_stop && this->current_operation == cover::COVER_OPERATION_CLOSING) {
+         ESP_LOGD(TAG, "Ignoring Bottom/Stop status (command sent recently)");
+      } else {
+         ESP_LOGD(TAG, "Status: Bottom Limit Reached");
+         this->exact_position_ = 0.0f;
+         this->exact_tilt_ = 0.0f;
+         this->stop_movement();
+         this->stop_poll_loop();
+      }
       break;
 
     case ELERO_STATE_START_MOVING_UP: // 0x08
@@ -311,7 +308,8 @@ void EleroCover::set_rx_state(uint8_t state) {
       if (!this->is_moving_ || this->current_operation != cover::COVER_OPERATION_OPENING) {
         this->start_movement(cover::COVER_OPERATION_OPENING);
       }
-      // Continue polling to catch when it stops
+      // Reset poll retries to keep tracking movement
+      this->poll_retries_left_ = 3; 
       break;
 
     case ELERO_STATE_START_MOVING_DOWN: // 0x09
@@ -320,7 +318,38 @@ void EleroCover::set_rx_state(uint8_t state) {
       if (!this->is_moving_ || this->current_operation != cover::COVER_OPERATION_CLOSING) {
         this->start_movement(cover::COVER_OPERATION_CLOSING);
       }
-      // Continue polling to catch when it stops
+      // Reset poll retries to keep tracking movement
+      this->poll_retries_left_ = 3;
+      break;
+
+    case ELERO_STATE_TOP_TILT: // 0x0E
+      ESP_LOGD(TAG, "Status: Top Tilt Reached");
+      this->exact_position_ = 1.0f;
+      this->exact_tilt_ = 0.3f; // As requested
+      this->stop_movement();
+      this->stop_poll_loop();
+      break;
+
+    case ELERO_STATE_BOTTOM_TILT: // 0x0F
+      ESP_LOGD(TAG, "Status: Bottom Tilt Reached");
+      this->exact_position_ = 0.0f;
+      this->exact_tilt_ = 0.3f; // As requested
+      this->stop_movement();
+      this->stop_poll_loop();
+      break;
+
+    case ELERO_STATE_STOPPED: // 0x0D
+    case ELERO_STATE_INTERMEDIATE: // 0x03
+    case ELERO_STATE_TILT: // 0x04
+    case ELERO_STATE_OFF: // 0x10
+    default:
+      if (ignore_stop && this->is_moving_) {
+         ESP_LOGD(TAG, "Ignoring Stopped status 0x%02X (command sent recently)", state);
+      } else {
+         ESP_LOGD(TAG, "Status: Stopped/Other (0x%02X)", state);
+         this->stop_movement();
+         this->stop_poll_loop();
+      }
       break;
   }
   

@@ -10,7 +10,7 @@ namespace elero {
 
 class EleroCover : public cover::Cover, public Component {
  public:
-  // --- ELERO STATUS CODES (Received from Blind) ---
+  // --- ELERO STATUS CODES (Based on PDF) ---
   static const uint8_t ELERO_STATE_UNKNOWN = 0x00;
   static const uint8_t ELERO_STATE_TOP = 0x01;
   static const uint8_t ELERO_STATE_BOTTOM = 0x02;
@@ -114,6 +114,7 @@ class EleroCover : public cover::Cover, public Component {
   
   // Polling state
   uint32_t last_valid_status_time_{0};
+  uint32_t last_command_time_{0}; // To ignore immediate stop echos
   int poll_retries_left_{0};
   
   // Precise position tracking
