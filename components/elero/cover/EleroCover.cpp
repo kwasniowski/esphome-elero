@@ -36,6 +36,7 @@ cover::CoverTraits EleroCover::get_traits() {
   auto traits = cover::CoverTraits();
   traits.set_supports_position(true);
   traits.set_supports_stop(true);
+  // Assumed state allows buttons to be active even if HA thinks limit is reached
   traits.set_is_assumed_state(true);
   
   if (this->supports_tilt_) {
@@ -123,7 +124,12 @@ void EleroCover::control(const cover::CoverCall &call) {
 
     this->is_tilting_only_ = false;
 
-    if (target_pos > this->exact_position_ + 0.01f) {
+    // FIX: Force movement if target is at limits (0.0 or 1.0)
+    // This allows re-syncing if HA thinks we are at limit but we are not.
+    bool force_up = (target_pos == 1.0f);
+    bool force_down = (target_pos == 0.0f);
+
+    if (force_up || target_pos > this->exact_position_ + 0.01f) {
       this->send_command(this->command_up_);
       this->start_movement(cover::COVER_OPERATION_OPENING);
       
@@ -135,7 +141,7 @@ void EleroCover::control(const cover::CoverCall &call) {
         }
       });
     } 
-    else if (target_pos < this->exact_position_ - 0.01f) {
+    else if (force_down || target_pos < this->exact_position_ - 0.01f) {
       this->send_command(this->command_down_);
       this->start_movement(cover::COVER_OPERATION_CLOSING);
       
@@ -203,7 +209,25 @@ void EleroCover::execute_poll_loop() {
   }
 
   ESP_LOGD(TAG, "Polling blind 0x%06X, retries left: %d", this->blind_address_, this->poll_retries_left_);
-  this->send_command(this->command_check_);
+  
+  // Manually construct a clean CHECK command (payload 0x00 0x00)
+  if (this->parent_ != nullptr) {
+    this->increase_counter();
+    t_elero_command cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.payload[0] = 0x00; // CLEAN PAYLOAD FOR CHECK
+    cmd.payload[1] = 0x00; // CLEAN PAYLOAD FOR CHECK
+    cmd.pck_inf[0] = this->pckinf_1_;
+    cmd.pck_inf[1] = this->pckinf_2_;
+    cmd.hop = this->hop_;
+    cmd.channel = this->channel_;
+    cmd.remote_addr = this->remote_address_;
+    cmd.blind_addr = this->blind_address_;
+    cmd.command = this->command_check_;
+    cmd.counter = this->counter_;
+    this->parent_->send_command(&cmd);
+  }
+
   this->poll_retries_left_--;
 
   // Schedule next poll in 2 seconds
@@ -271,7 +295,12 @@ void EleroCover::set_rx_state(uint8_t state) {
     case ELERO_STATE_TILT: // 0x04
     case ELERO_STATE_TOP_TILT: // 0x0E
     case ELERO_STATE_BOTTOM_TILT: // 0x0F
-      ESP_LOGD(TAG, "Status: Stopped (0x%02X)", state);
+    case ELERO_STATE_BLOCKING: // 0x05
+    case ELERO_STATE_OVERHEATED: // 0x06
+    case ELERO_STATE_TIMEOUT: // 0x07
+    default:
+      // For any other state (Stopped, Error, Unknown), assume we stopped.
+      ESP_LOGD(TAG, "Status: Stopped/Other (0x%02X)", state);
       this->stop_movement();
       this->stop_poll_loop();
       break;
@@ -282,7 +311,7 @@ void EleroCover::set_rx_state(uint8_t state) {
       if (!this->is_moving_ || this->current_operation != cover::COVER_OPERATION_OPENING) {
         this->start_movement(cover::COVER_OPERATION_OPENING);
       }
-      // Do NOT stop polling, we are moving
+      // Continue polling to catch when it stops
       break;
 
     case ELERO_STATE_START_MOVING_DOWN: // 0x09
@@ -291,19 +320,7 @@ void EleroCover::set_rx_state(uint8_t state) {
       if (!this->is_moving_ || this->current_operation != cover::COVER_OPERATION_CLOSING) {
         this->start_movement(cover::COVER_OPERATION_CLOSING);
       }
-      // Do NOT stop polling, we are moving
-      break;
-
-    case ELERO_STATE_BLOCKING: // 0x05
-    case ELERO_STATE_OVERHEATED: // 0x06
-    case ELERO_STATE_TIMEOUT: // 0x07
-      ESP_LOGW(TAG, "Status: Error/Blocking (0x%02X)", state);
-      this->stop_movement();
-      this->stop_poll_loop();
-      break;
-
-    default:
-      ESP_LOGD(TAG, "Status: Unknown (0x%02X)", state);
+      // Continue polling to catch when it stops
       break;
   }
   

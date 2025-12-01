@@ -11,24 +11,19 @@ static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e,
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
 void Elero::loop() {
-  // Check if interrupt flag was set
   if (this->received_.exchange(false)) {
-    // Check available bytes
     uint8_t len_status = this->read_status(CC1101_RXBYTES);
     uint8_t bytes_available = len_status & 0x7F;
     
     if (bytes_available > 0) {
-      // Safety check for FIFO length
       if (bytes_available > CC1101_FIFO_LENGTH) {
         ESP_LOGW(TAG, "RX FIFO overflow detected (%d bytes), flushing.", bytes_available);
         this->flush_and_rx();
         return;
       }
 
-      // Read from FIFO
       this->read_buf(CC1101_RXFIFO, this->msg_rx_, bytes_available);
 
-      // Basic packet validation (Length byte + overhead)
       if (this->msg_rx_[0] + 3 <= bytes_available) {
         this->interpret_msg();
       } else {
@@ -36,7 +31,6 @@ void Elero::loop() {
       }
     }
 
-    // Check for overflow flag
     if (len_status & 0x80) {
       ESP_LOGV(TAG, "CC1101 RX Overflow, flushing.");
       this->flush_and_rx();
@@ -351,15 +345,10 @@ std::string Elero::resolve_addr(uint32_t addr) const {
 
 void Elero::interpret_msg() {
   uint8_t length = this->msg_rx_[0];
-  if(length > ELERO_MAX_PACKET_SIZE) {
-    ESP_LOGD(TAG, "Message too long, not trying to interpret");
-    return;
-  }
+  if(length > ELERO_MAX_PACKET_SIZE) return;
 
-  // Extract fields
   uint8_t cnt = this->msg_rx_[1];
   uint8_t typ = this->msg_rx_[2];
-  uint8_t typ2 = this->msg_rx_[3];
   uint8_t hop = this->msg_rx_[4];
   uint8_t syst = this->msg_rx_[5];
   uint8_t chl = this->msg_rx_[6];
@@ -385,37 +374,16 @@ void Elero::interpret_msg() {
   msg_decode(payload);
 
   ESP_LOGD(TAG, "Msg: Len=%d Cnt=%d Typ=0x%02X Src=0x%06X Bwd=%s Fwd=%s Hop=0x%02X Syst=0x%02x Channel=%02d #Dest=%02d Dest=%s rssi=%2.1f, lqi=%2d, crc=%2d Payload=[0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X]", 
-    length, 
-    cnt, 
-    typ, 
-    src, // Log SRC as HEX to easily match with remote_address
-    resolve_addr(bwd).c_str(), 
-    resolve_addr(fwd).c_str(), 
-    hop, 
-    syst,
-    chl,
-    dests_len,
-    resolve_addr(dst).c_str(), 
-    rssi, 
-    lqi, 
-    crc,
-    payload1,
-    payload2,
-    payload[0], 
-    payload[1],
-    payload[2],
-    payload[3],
-    payload[4],
-    payload[5],
-    payload[6],
-    payload[7]
+    length, cnt, typ, src, resolve_addr(bwd).c_str(), resolve_addr(fwd).c_str(), 
+    hop, syst, chl, dests_len, resolve_addr(dst).c_str(), rssi, lqi, crc,
+    payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]
   );
 
   // 1. Handle Status Messages (Blind -> ESP)
   auto search = this->address_to_cover_mapping_.find(src);
   if(search != this->address_to_cover_mapping_.end()) {
     // Status byte is usually at payload[6] for status messages
-    // 0xCA = Status Message
+    // 0xCA = Status Message, 0xC9 = Info/Response
     if (typ == 0xCA || typ == 0xC9) {
         ESP_LOGI(TAG, "External update for blind: %s, Status: 0x%02X", search->second->get_name().c_str(), payload[6]);
         search->second->set_rx_state(payload[6]);
@@ -424,10 +392,8 @@ void Elero::interpret_msg() {
   // 2. Handle Remote Commands (Remote Spy: Remote -> Blind)
   else {
     bool remote_found = false;
-    ESP_LOGI(TAG, "Checking for command from : %06X", src);
     for (auto const& [addr, cover] : this->address_to_cover_mapping_) {
         // Check if SRC matches the remote address configured for this blind
-        ESP_LOGI(TAG, "Checking for remote : %06X, Requestor: %06X", cover->get_remote_address(), src);
         if (cover->get_remote_address() == src) {
             // Check if CHANNEL matches (or if message is broadcast channel 0)
             if (cover->get_channel() == chl || chl == 0) {
@@ -500,22 +466,20 @@ void Elero::close_and_reset_all() {
     ESP_LOGI(TAG, "Resetting cover: %s (0x%06X)", cover->get_name().c_str(), addr);
     
     // 1. Send DOWN command via Radio
-    // We construct a command packet manually to send a real radio signal
     t_elero_command cmd;
     memset(&cmd, 0, sizeof(cmd));
     
     cmd.blind_addr = addr;
-    cmd.remote_addr = cover->get_remote_address(); // We need to fetch this from cover
-    cmd.channel = 1; // Default channel, or fetch from cover if available
-    cmd.command = 0x40; // ELERO_CMD_DOWN (Hardcoded or use constant)
-    cmd.counter = 1; // Simple counter
-    cmd.pck_inf[0] = 0x6A; // Default pck_inf
+    cmd.remote_addr = cover->get_remote_address(); 
+    cmd.channel = 1; 
+    cmd.command = 0x40; // ELERO_CMD_DOWN
+    cmd.counter = 1; 
+    cmd.pck_inf[0] = 0x6A; 
     cmd.pck_inf[1] = 0x00;
     cmd.hop = 0x0A;
     cmd.payload[0] = 0x00;
-    cmd.payload[1] = 0x04; // Standard payload
+    cmd.payload[1] = 0x04; 
 
-    // Send the command
     this->send_command(&cmd);
 
     // 2. Force internal state to 0.0 (Closed)
